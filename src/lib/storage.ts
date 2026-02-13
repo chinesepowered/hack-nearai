@@ -15,7 +15,11 @@ export function loadConversations(): Conversation[] {
 
 export function saveConversations(conversations: Conversation[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+  } catch {
+    // Storage quota exceeded — silently fail, data is still in memory
+  }
 }
 
 export function exportConversations(conversations: Conversation[]): void {

@@ -47,9 +47,13 @@ export async function fetchMultipleWallets(
   return Promise.all(
     addresses.map(async (a) => {
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
         const res = await fetch(
           `/api/wallet?address=${encodeURIComponent(a.address)}&chain=${a.chain}`,
+          { signal: controller.signal },
         );
+        clearTimeout(timeout);
         if (!res.ok) throw new Error("Failed");
         return res.json();
       } catch {

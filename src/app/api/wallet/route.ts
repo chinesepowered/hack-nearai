@@ -1,5 +1,15 @@
 import { WalletData } from "@/lib/wallet";
 
+const RPC_TIMEOUT = 5000;
+
+function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RPC_TIMEOUT);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+    clearTimeout(timeout),
+  );
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const address = searchParams.get("address");
@@ -33,7 +43,7 @@ export async function GET(req: Request) {
 }
 
 async function fetchNearWallet(address: string) {
-  const res = await fetch("https://rpc.mainnet.near.org", {
+  const res = await fetchWithTimeout("https://rpc.mainnet.near.org", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -74,7 +84,7 @@ async function fetchNearWallet(address: string) {
 
 async function fetchEthWallet(address: string) {
   const [balanceRes, txCountRes] = await Promise.all([
-    fetch("https://eth.llamarpc.com", {
+    fetchWithTimeout("https://eth.llamarpc.com", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -84,7 +94,7 @@ async function fetchEthWallet(address: string) {
         id: 1,
       }),
     }),
-    fetch("https://eth.llamarpc.com", {
+    fetchWithTimeout("https://eth.llamarpc.com", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -99,7 +109,16 @@ async function fetchEthWallet(address: string) {
   const balanceData = await balanceRes.json();
   const txCountData = await txCountRes.json();
 
-  const balanceWei = BigInt(balanceData.result || "0x0");
+  if (balanceData.error || !balanceData.result) {
+    return Response.json({
+      address,
+      chain: "ethereum",
+      balance: "unknown",
+      error: balanceData.error?.message || "RPC error",
+    } satisfies WalletData);
+  }
+
+  const balanceWei = BigInt(balanceData.result);
   const balanceEth = Number(balanceWei / BigInt(1e10)) / 1e8;
   const txCount = parseInt(txCountData.result || "0x0", 16);
 

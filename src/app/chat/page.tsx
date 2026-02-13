@@ -281,7 +281,10 @@ export default function ChatPage() {
 
       const newConv: Conversation = {
         id,
-        title: firstMessage.slice(0, 60),
+        title:
+          firstMessage.length > 60
+            ? firstMessage.slice(0, 57) + "..."
+            : firstMessage,
         category,
         messages: [userMsg],
         createdAt: Date.now(),

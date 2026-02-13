@@ -13,10 +13,28 @@ interface MessageListProps {
 }
 
 function UserMessage({ message }: { message: Message }) {
+  const fileMatch = message.content.match(/^\[(.+?\.\w+)\]\s*/);
+  const fileName = fileMatch?.[1];
+  const textContent = fileMatch
+    ? message.content.slice(fileMatch[0].length)
+    : message.content;
+
   return (
     <div className="flex justify-end animate-fade-in">
-      <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-br-md bg-emerald-500/10 border border-emerald-500/20 text-zinc-100 text-sm leading-relaxed whitespace-pre-wrap">
-        {message.content}
+      <div className="max-w-[80%]">
+        {fileName && (
+          <div className="flex justify-end mb-1.5">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 border border-zinc-700/50 text-[11px] text-zinc-300">
+              <svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+              {fileName}
+            </span>
+          </div>
+        )}
+        <div className="px-4 py-3 rounded-2xl rounded-br-md bg-emerald-500/10 border border-emerald-500/20 text-zinc-100 text-sm leading-relaxed whitespace-pre-wrap">
+          {textContent || fileName}
+        </div>
       </div>
     </div>
   );
@@ -95,19 +113,19 @@ export default function MessageList({
             <div className="flex items-center gap-2 px-4 py-3">
               <div className="flex gap-1">
                 <div
-                  className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-bounce"
+                  className={`w-1.5 h-1.5 rounded-full animate-bounce ${statusMessage ? "bg-amber-400" : "bg-zinc-500"}`}
                   style={{ animationDelay: "0ms" }}
                 />
                 <div
-                  className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-bounce"
+                  className={`w-1.5 h-1.5 rounded-full animate-bounce ${statusMessage ? "bg-amber-400" : "bg-zinc-500"}`}
                   style={{ animationDelay: "150ms" }}
                 />
                 <div
-                  className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-bounce"
+                  className={`w-1.5 h-1.5 rounded-full animate-bounce ${statusMessage ? "bg-amber-400" : "bg-zinc-500"}`}
                   style={{ animationDelay: "300ms" }}
                 />
               </div>
-              <span className="text-xs text-zinc-500">
+              <span className={`text-xs ${statusMessage ? "text-amber-400/80" : "text-zinc-500"}`}>
                 {statusMessage || "Thinking privately..."}
               </span>
             </div>
