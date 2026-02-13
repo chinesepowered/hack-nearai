@@ -9,7 +9,7 @@ export async function POST(req: Request) {
   };
 
   const apiKey = process.env.NEAR_AI_API_KEY;
-  const model = process.env.NEAR_AI_MODEL || "deepseek-ai/DeepSeek-V3.1";
+  const model = process.env.NEAR_AI_MODEL || "zai-org/GLM-4.7";
 
   if (!apiKey) {
     const encoder = new TextEncoder();
