@@ -398,6 +398,82 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Privacy comparison */}
+      <section className="relative py-24 px-6 border-t border-zinc-900">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-center mb-14">
+            <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+              Standard AI vs UNDOX
+            </h2>
+            <p className="text-zinc-400 text-lg max-w-xl mx-auto">
+              The difference between &ldquo;we promise&rdquo; and &ldquo;we
+              can&apos;t.&rdquo;
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 overflow-hidden">
+            {/* Header */}
+            <div className="grid grid-cols-[1fr,1fr,1fr] text-center text-sm font-semibold">
+              <div className="p-4 bg-zinc-900/50" />
+              <div className="p-4 bg-red-500/[0.03] border-l border-zinc-800 text-red-400">
+                Standard AI
+              </div>
+              <div className="p-4 bg-emerald-500/[0.03] border-l border-zinc-800 text-emerald-400">
+                UNDOX
+              </div>
+            </div>
+            {/* Rows */}
+            {[
+              {
+                feature: "Your prompts",
+                standard: "Stored on servers",
+                undox: "TEE only — never stored",
+              },
+              {
+                feature: "Account required",
+                standard: "Email + phone",
+                undox: "None — fully anonymous",
+              },
+              {
+                feature: "IP address",
+                standard: "Logged & tracked",
+                undox: "Not recorded",
+              },
+              {
+                feature: "Data retention",
+                standard: "Months to years",
+                undox: "Browser only — you decide",
+              },
+              {
+                feature: "Can be subpoenaed",
+                standard: "Yes — data exists",
+                undox: "No — no data to give",
+              },
+              {
+                feature: "Wallet analysis",
+                standard: "Linked to your email",
+                undox: "Anonymous on-chain fetch",
+              },
+            ].map((row) => (
+              <div
+                key={row.feature}
+                className="grid grid-cols-[1fr,1fr,1fr] text-sm border-t border-zinc-800/50"
+              >
+                <div className="px-4 py-3 text-zinc-300 font-medium">
+                  {row.feature}
+                </div>
+                <div className="px-4 py-3 text-red-400/70 border-l border-zinc-800/50 text-center">
+                  {row.standard}
+                </div>
+                <div className="px-4 py-3 text-emerald-400/90 border-l border-zinc-800/50 text-center font-medium">
+                  {row.undox}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Data ownership section */}
       <section className="relative py-24 px-6 border-t border-zinc-900">
         <div className="max-w-4xl mx-auto text-center">

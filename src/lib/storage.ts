@@ -73,6 +73,20 @@ export function exportConversationAsText(conversation: Conversation): void {
   URL.revokeObjectURL(url);
 }
 
+export function purgeExpired(conversations: Conversation[]): Conversation[] {
+  const now = Date.now();
+  return conversations.filter((c) => !c.expiresAt || c.expiresAt > now);
+}
+
+export function formatTimeRemaining(expiresAt: number): string {
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) return "Expired";
+  if (remaining < 60000) return `${Math.ceil(remaining / 1000)}s`;
+  if (remaining < 3600000) return `${Math.ceil(remaining / 60000)}m`;
+  if (remaining < 86400000) return `${Math.ceil(remaining / 3600000)}h`;
+  return `${Math.ceil(remaining / 86400000)}d`;
+}
+
 export function getStorageStats(conversations: Conversation[]) {
   const totalMessages = conversations.reduce(
     (sum, c) => sum + c.messages.length,

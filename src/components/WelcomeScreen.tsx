@@ -6,7 +6,7 @@ import { getAllCategories } from "@/lib/categories";
 import ChatInput from "./ChatInput";
 
 interface WelcomeScreenProps {
-  onStart: (category: CategoryType, message: string) => void;
+  onStart: (category: CategoryType, message: string, file?: { name: string; content: string; size: string }) => void;
 }
 
 export default function WelcomeScreen({ onStart }: WelcomeScreenProps) {
@@ -115,8 +115,8 @@ export default function WelcomeScreen({ onStart }: WelcomeScreenProps) {
       {/* Input */}
       <div className="max-w-3xl mx-auto w-full px-4 pb-4">
         <ChatInput
-          onSend={(msg) =>
-            onStart(selectedCategory || "general", msg)
+          onSend={(msg, file) =>
+            onStart(selectedCategory || "general", msg, file)
           }
           isStreaming={false}
           onStop={() => {}}

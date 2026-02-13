@@ -129,6 +129,17 @@ export default function Sidebar({
                 >
                   <span className="text-xs shrink-0">{cat.icon}</span>
                   <span className="text-sm truncate flex-1">{conv.title}</span>
+                  {conv.expiresAt && (
+                    <span className="shrink-0 text-[10px] text-amber-400/70 font-mono" title="Auto-delete timer active">
+                      {(() => {
+                        const r = conv.expiresAt - Date.now();
+                        if (r <= 0) return "...";
+                        if (r < 3600000) return `${Math.ceil(r / 60000)}m`;
+                        if (r < 86400000) return `${Math.ceil(r / 3600000)}h`;
+                        return `${Math.ceil(r / 86400000)}d`;
+                      })()}
+                    </span>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

@@ -2,27 +2,73 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Conversation, Message, CategoryType } from "@/types";
-import { loadConversations, saveConversations } from "@/lib/storage";
+import {
+  loadConversations,
+  saveConversations,
+  purgeExpired,
+  formatTimeRemaining,
+} from "@/lib/storage";
+import {
+  detectAddresses,
+  fetchMultipleWallets,
+  formatWalletContext,
+} from "@/lib/wallet";
 import Sidebar from "@/components/Sidebar";
 import MessageList from "@/components/MessageList";
 import ChatInput from "@/components/ChatInput";
 import WelcomeScreen from "@/components/WelcomeScreen";
 import PrivacyBadge from "@/components/PrivacyBadge";
 
+interface FileAttachment {
+  name: string;
+  content: string;
+  size: string;
+}
+
+const PURGE_OPTIONS = [
+  { label: "No auto-delete", value: null },
+  { label: "1 hour", value: 3600000 },
+  { label: "24 hours", value: 86400000 },
+  { label: "7 days", value: 604800000 },
+];
+
 export default function ChatPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loaded, setLoaded] = useState(false);
+  const [showPurgeMenu, setShowPurgeMenu] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Load from localStorage on mount
+  // Load from localStorage + purge expired
   useEffect(() => {
-    setConversations(loadConversations());
+    const convs = loadConversations();
+    const purged = purgeExpired(convs);
+    setConversations(purged);
+    if (purged.length !== convs.length) {
+      saveConversations(purged);
+    }
     setLoaded(true);
   }, []);
+
+  // Periodically check for expired conversations
+  useEffect(() => {
+    if (!loaded) return;
+    const interval = setInterval(() => {
+      setConversations((prev) => {
+        const purged = purgeExpired(prev);
+        if (purged.length !== prev.length) {
+          saveConversations(purged);
+          return purged;
+        }
+        return prev;
+      });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [loaded]);
 
   // Save to localStorage whenever conversations change
   useEffect(() => {
@@ -33,6 +79,47 @@ export default function ChatPage() {
 
   const currentConversation =
     conversations.find((c) => c.id === currentId) || null;
+
+  // Enrich message with wallet data + file content for the API
+  const enrichMessage = useCallback(
+    async (
+      content: string,
+      category: CategoryType,
+      file?: FileAttachment,
+    ): Promise<{ display: string; api: string }> => {
+      let display = content;
+      let api = content;
+
+      // Attach file content (display shows filename, API gets full content)
+      if (file) {
+        display = file.name
+          ? `[${file.name}] ${content}`
+          : content;
+        api = `[Attached file: ${file.name}]\n${file.content}\n---\n${content}`;
+      }
+
+      // Detect and fetch wallet data for crypto category
+      if (category === "crypto") {
+        const addresses = detectAddresses(content);
+        if (addresses.length > 0) {
+          setStatusMessage(
+            `Fetching wallet data for ${addresses.map((a) => a.address.slice(0, 10) + "...").join(", ")}`,
+          );
+          try {
+            const wallets = await fetchMultipleWallets(addresses);
+            const walletContext = formatWalletContext(wallets);
+            api = walletContext + "\n" + api;
+          } catch {
+            // If wallet fetch fails, proceed without data
+          }
+          setStatusMessage(null);
+        }
+      }
+
+      return { display, api };
+    },
+    [],
+  );
 
   const streamResponse = useCallback(
     async (
@@ -89,7 +176,6 @@ export default function ChatPage() {
           }
         }
 
-        // Process any remaining buffer
         if (buffer.startsWith("data: ") && buffer !== "data: [DONE]") {
           try {
             const data = JSON.parse(buffer.slice(6));
@@ -99,7 +185,6 @@ export default function ChatPage() {
           }
         }
 
-        // Add completed assistant message
         if (fullContent.trim()) {
           const assistantMsg: Message = {
             id: crypto.randomUUID(),
@@ -122,7 +207,6 @@ export default function ChatPage() {
         }
       } catch (error: unknown) {
         if (error instanceof Error && error.name === "AbortError") {
-          // Save partial content if user stopped generation
           if (fullContent.trim()) {
             const partialMsg: Message = {
               id: crypto.randomUUID(),
@@ -168,6 +252,7 @@ export default function ChatPage() {
       } finally {
         setIsStreaming(false);
         setStreamingContent("");
+        setStatusMessage(null);
         abortControllerRef.current = null;
       }
     },
@@ -175,12 +260,22 @@ export default function ChatPage() {
   );
 
   const startNewChat = useCallback(
-    (category: CategoryType, firstMessage: string) => {
+    async (
+      category: CategoryType,
+      firstMessage: string,
+      file?: FileAttachment,
+    ) => {
       const id = crypto.randomUUID();
+      const { display, api } = await enrichMessage(
+        firstMessage,
+        category,
+        file,
+      );
+
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: "user",
-        content: firstMessage,
+        content: display,
         timestamp: Date.now(),
       };
 
@@ -196,25 +291,33 @@ export default function ChatPage() {
       setConversations((prev) => [newConv, ...prev]);
       setCurrentId(id);
 
-      // Close sidebar on mobile
       if (window.innerWidth < 768) {
         setSidebarOpen(false);
       }
 
-      streamResponse(id, [{ role: "user", content: firstMessage }], category);
+      streamResponse(id, [{ role: "user", content: api }], category);
     },
-    [streamResponse],
+    [enrichMessage, streamResponse],
   );
 
   const handleSend = useCallback(
-    (content: string) => {
-      if (!content.trim() || isStreaming || !currentId || !currentConversation)
+    async (
+      content: string,
+      file?: FileAttachment,
+    ) => {
+      if ((!content.trim() && !file) || isStreaming || !currentId || !currentConversation)
         return;
+
+      const { display, api } = await enrichMessage(
+        content,
+        currentConversation.category,
+        file,
+      );
 
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: "user",
-        content,
+        content: display,
         timestamp: Date.now(),
       };
 
@@ -223,7 +326,7 @@ export default function ChatPage() {
           role: m.role as "user" | "assistant",
           content: m.content,
         })),
-        { role: "user" as const, content },
+        { role: "user" as const, content: api },
       ];
 
       setConversations((prev) =>
@@ -240,7 +343,7 @@ export default function ChatPage() {
 
       streamResponse(currentId, apiMessages, currentConversation.category);
     },
-    [currentId, currentConversation, isStreaming, streamResponse],
+    [currentId, currentConversation, isStreaming, enrichMessage, streamResponse],
   );
 
   const stopStreaming = useCallback(() => {
@@ -265,6 +368,24 @@ export default function ChatPage() {
     setConversations([]);
     setCurrentId(null);
   }, []);
+
+  const setExpiry = useCallback(
+    (value: number | null) => {
+      if (!currentId) return;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === currentId
+            ? {
+                ...c,
+                expiresAt: value ? Date.now() + value : null,
+              }
+            : c,
+        ),
+      );
+      setShowPurgeMenu(false);
+    },
+    [currentId],
+  );
 
   if (!loaded) {
     return (
@@ -347,7 +468,54 @@ export default function ChatPage() {
               <div className="md:pl-0 pl-10">
                 <PrivacyBadge category={currentConversation.category} />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                {/* Auto-purge timer */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowPurgeMenu(!showPurgeMenu)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition-colors ${
+                      currentConversation.expiresAt
+                        ? "bg-amber-500/10 border border-amber-500/20 text-amber-400"
+                        : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+                    }`}
+                    title="Auto-delete timer"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {currentConversation.expiresAt
+                      ? formatTimeRemaining(currentConversation.expiresAt)
+                      : "Auto-delete"}
+                  </button>
+
+                  {showPurgeMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setShowPurgeMenu(false)}
+                      />
+                      <div className="absolute right-0 top-full mt-1 z-20 w-44 py-1 rounded-xl bg-zinc-800 border border-zinc-700 shadow-xl animate-fade-in">
+                        <div className="px-3 py-1.5 text-[10px] text-zinc-500 uppercase tracking-wider font-medium">
+                          Self-destruct timer
+                        </div>
+                        {PURGE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.label}
+                            onClick={() => setExpiry(opt.value)}
+                            className={`w-full text-left px-3 py-2 text-xs transition-colors ${
+                              (opt.value === null && !currentConversation.expiresAt)
+                                ? "text-emerald-400 bg-emerald-500/5"
+                                : "text-zinc-300 hover:bg-zinc-700/50"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
                 <span className="text-xs text-zinc-600">
                   {currentConversation.messages.length} messages
                 </span>
@@ -359,6 +527,7 @@ export default function ChatPage() {
               messages={currentConversation.messages}
               streamingContent={streamingContent}
               isStreaming={isStreaming}
+              statusMessage={statusMessage}
             />
 
             {/* Input */}

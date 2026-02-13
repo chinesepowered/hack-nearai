@@ -9,6 +9,7 @@ interface MessageListProps {
   messages: Message[];
   streamingContent: string;
   isStreaming: boolean;
+  statusMessage?: string | null;
 }
 
 function UserMessage({ message }: { message: Message }) {
@@ -65,6 +66,7 @@ export default function MessageList({
   messages,
   streamingContent,
   isStreaming,
+  statusMessage,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -106,7 +108,7 @@ export default function MessageList({
                 />
               </div>
               <span className="text-xs text-zinc-500">
-                Thinking privately...
+                {statusMessage || "Thinking privately..."}
               </span>
             </div>
           </div>

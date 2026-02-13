@@ -19,6 +19,7 @@ export interface Conversation {
   messages: Message[];
   createdAt: number;
   updatedAt: number;
+  expiresAt?: number | null;
 }
 
 export interface Category {
