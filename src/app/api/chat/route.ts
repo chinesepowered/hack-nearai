@@ -3,35 +3,21 @@ import { getSystemPrompt } from "@/lib/categories";
 import { CategoryType } from "@/types";
 
 export async function POST(req: Request) {
-  const { messages, category } = (await req.json()) as {
+  const { messages, category, apiKey: clientKey } = (await req.json()) as {
     messages: { role: "user" | "assistant"; content: string }[];
     category: CategoryType;
+    apiKey?: string;
   };
 
-  const apiKey = process.env.NEAR_AI_API_KEY;
+  // Use client-provided key first, then fall back to server env var
+  const apiKey = clientKey || process.env.NEAR_AI_API_KEY;
   const model = process.env.NEAR_AI_MODEL || "zai-org/GLM-4.7";
 
   if (!apiKey) {
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      start(controller) {
-        const msg =
-          "⚠️ **NEAR AI API key not configured.**\n\nTo start using UNDOX:\n\n1. Get your API key at [cloud.near.ai](https://cloud.near.ai)\n2. Create a `.env.local` file in the project root\n3. Add: `NEAR_AI_API_KEY=your_key_here`\n4. Restart the dev server\n\nYour conversations are stored locally in your browser and will be waiting for you.";
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ content: msg })}\n\n`),
-        );
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return new Response(
+      JSON.stringify({ error: "NO_API_KEY" }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   const client = new OpenAI({
