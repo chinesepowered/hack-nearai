@@ -13,7 +13,6 @@ import {
   fetchMultipleWallets,
   formatWalletContext,
 } from "@/lib/wallet";
-import { getSystemPrompt } from "@/lib/categories";
 import Sidebar from "@/components/Sidebar";
 import MessageList from "@/components/MessageList";
 import ChatInput from "@/components/ChatInput";
@@ -28,8 +27,6 @@ interface FileAttachment {
 }
 
 const STORAGE_KEY = "undox_near_ai_key";
-const NEAR_AI_BASE = "https://cloud-api.near.ai/v1";
-const DEFAULT_MODEL = "zai-org/GLM-4.7";
 
 const PURGE_OPTIONS = [
   { label: "No auto-delete", value: null },
@@ -53,7 +50,6 @@ export default function ChatPage() {
   const [apiKeySource, setApiKeySource] = useState<"server" | "local" | null>(null);
   const [userApiKey, setUserApiKey] = useState<string | null>(null);
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
-  const [model, setModel] = useState(DEFAULT_MODEL);
 
   // Check for API key on mount
   useEffect(() => {
@@ -61,7 +57,6 @@ export default function ChatPage() {
       try {
         const res = await fetch("/api/config");
         const config = await res.json();
-        if (config.defaultModel) setModel(config.defaultModel);
 
         if (config.hasServerKey) {
           setApiKeySource("server");
@@ -180,17 +175,23 @@ export default function ChatPage() {
     [],
   );
 
-  // Stream via server-side /api/chat route
-  const streamViaServer = useCallback(
+  // Stream via /api/chat route (passes user key when no server key)
+  const streamChat = useCallback(
     async (
       messages: { role: string; content: string }[],
       category: CategoryType,
       signal: AbortSignal,
     ): Promise<string> => {
+      const body: Record<string, unknown> = { messages, category };
+      // Pass user's key to the server proxy when using localStorage key
+      if (apiKeySource === "local" && userApiKey) {
+        body.apiKey = userApiKey;
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages, category }),
+        body: JSON.stringify(body),
         signal,
       });
 
@@ -198,6 +199,14 @@ export default function ChatPage() {
         const err = await response.json().catch(() => ({
           error: "Unknown error",
         }));
+        if (response.status === 401 || err.error === "NO_API_KEY") {
+          // Invalid or missing key — clear and prompt again
+          localStorage.removeItem(STORAGE_KEY);
+          setUserApiKey(null);
+          setApiKeySource(null);
+          setShowApiKeyModal(true);
+          throw new Error("Invalid API key. Please enter a valid key.");
+        }
         throw new Error(err.error || "Failed to get response");
       }
 
@@ -239,92 +248,7 @@ export default function ChatPage() {
 
       return fullContent;
     },
-    [],
-  );
-
-  // Stream directly to NEAR AI from client (using user's API key)
-  const streamViaClient = useCallback(
-    async (
-      messages: { role: string; content: string }[],
-      category: CategoryType,
-      apiKey: string,
-      signal: AbortSignal,
-    ): Promise<string> => {
-      const systemPrompt = getSystemPrompt(category);
-
-      const response = await fetch(`${NEAR_AI_BASE}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "system", content: systemPrompt }, ...messages],
-          stream: true,
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          // Invalid API key — clear it and prompt again
-          localStorage.removeItem(STORAGE_KEY);
-          setUserApiKey(null);
-          setApiKeySource(null);
-          setShowApiKeyModal(true);
-          throw new Error("Invalid API key. Please enter a valid key.");
-        }
-        const err = await response.json().catch(() => ({
-          error: "Unknown error",
-        }));
-        throw new Error(err.error?.message || err.error || "Failed to get response");
-      }
-
-      let fullContent = "";
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            if (line === "data: [DONE]") continue;
-            try {
-              const data = JSON.parse(line.slice(6));
-              // OpenAI-compatible format
-              const content = data.choices?.[0]?.delta?.content || "";
-              if (content) {
-                fullContent += content;
-                setStreamingContent(fullContent);
-              }
-            } catch {
-              // skip malformed chunks
-            }
-          }
-        }
-      }
-
-      if (buffer.startsWith("data: ") && buffer !== "data: [DONE]") {
-        try {
-          const data = JSON.parse(buffer.slice(6));
-          const content = data.choices?.[0]?.delta?.content || "";
-          if (content) fullContent += content;
-        } catch {
-          // skip
-        }
-      }
-
-      return fullContent;
-    },
-    [model],
+    [apiKeySource, userApiKey],
   );
 
   const streamResponse = useCallback(
@@ -342,20 +266,11 @@ export default function ChatPage() {
       let fullContent = "";
 
       try {
-        if (apiKeySource === "local" && userApiKey) {
-          fullContent = await streamViaClient(
-            messages,
-            category,
-            userApiKey,
-            abortController.signal,
-          );
-        } else {
-          fullContent = await streamViaServer(
-            messages,
-            category,
-            abortController.signal,
-          );
-        }
+        fullContent = await streamChat(
+          messages,
+          category,
+          abortController.signal,
+        );
 
         if (fullContent.trim()) {
           const assistantMsg: Message = {
@@ -428,7 +343,7 @@ export default function ChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [apiKeySource, userApiKey, streamViaClient, streamViaServer],
+    [streamChat],
   );
 
   const startNewChat = useCallback(
