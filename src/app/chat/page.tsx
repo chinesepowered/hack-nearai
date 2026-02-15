@@ -13,17 +13,23 @@ import {
   fetchMultipleWallets,
   formatWalletContext,
 } from "@/lib/wallet";
+import { getSystemPrompt } from "@/lib/categories";
 import Sidebar from "@/components/Sidebar";
 import MessageList from "@/components/MessageList";
 import ChatInput from "@/components/ChatInput";
 import WelcomeScreen from "@/components/WelcomeScreen";
 import PrivacyBadge from "@/components/PrivacyBadge";
+import ApiKeyModal from "@/components/ApiKeyModal";
 
 interface FileAttachment {
   name: string;
   content: string;
   size: string;
 }
+
+const STORAGE_KEY = "undox_near_ai_key";
+const NEAR_AI_BASE = "https://cloud-api.near.ai/v1";
+const DEFAULT_MODEL = "zai-org/GLM-4.7";
 
 const PURGE_OPTIONS = [
   { label: "No auto-delete", value: null },
@@ -42,6 +48,41 @@ export default function ChatPage() {
   const [loaded, setLoaded] = useState(false);
   const [showPurgeMenu, setShowPurgeMenu] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // API key state
+  const [apiKeySource, setApiKeySource] = useState<"server" | "local" | null>(null);
+  const [userApiKey, setUserApiKey] = useState<string | null>(null);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [model, setModel] = useState(DEFAULT_MODEL);
+
+  // Check for API key on mount
+  useEffect(() => {
+    async function checkApiKey() {
+      try {
+        const res = await fetch("/api/config");
+        const config = await res.json();
+        if (config.defaultModel) setModel(config.defaultModel);
+
+        if (config.hasServerKey) {
+          setApiKeySource("server");
+          return;
+        }
+      } catch {
+        // Server config unavailable — check localStorage
+      }
+
+      // No server key — check localStorage
+      const storedKey = localStorage.getItem(STORAGE_KEY);
+      if (storedKey) {
+        setUserApiKey(storedKey);
+        setApiKeySource("local");
+      } else {
+        setShowApiKeyModal(true);
+      }
+    }
+
+    checkApiKey();
+  }, []);
 
   // Load from localStorage + purge expired
   useEffect(() => {
@@ -76,6 +117,24 @@ export default function ChatPage() {
       saveConversations(conversations);
     }
   }, [conversations, loaded]);
+
+  const handleSaveApiKey = useCallback((key: string) => {
+    localStorage.setItem(STORAGE_KEY, key);
+    setUserApiKey(key);
+    setApiKeySource("local");
+    setShowApiKeyModal(false);
+  }, []);
+
+  const handleChangeApiKey = useCallback(() => {
+    setShowApiKeyModal(true);
+  }, []);
+
+  const handleClearApiKey = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    setUserApiKey(null);
+    setApiKeySource(null);
+    setShowApiKeyModal(true);
+  }, []);
 
   const currentConversation =
     conversations.find((c) => c.id === currentId) || null;
@@ -121,6 +180,153 @@ export default function ChatPage() {
     [],
   );
 
+  // Stream via server-side /api/chat route
+  const streamViaServer = useCallback(
+    async (
+      messages: { role: string; content: string }[],
+      category: CategoryType,
+      signal: AbortSignal,
+    ): Promise<string> => {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages, category }),
+        signal,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({
+          error: "Unknown error",
+        }));
+        throw new Error(err.error || "Failed to get response");
+      }
+
+      let fullContent = "";
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            if (line === "data: [DONE]") continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              fullContent += data.content;
+              setStreamingContent(fullContent);
+            } catch {
+              // skip malformed chunks
+            }
+          }
+        }
+      }
+
+      if (buffer.startsWith("data: ") && buffer !== "data: [DONE]") {
+        try {
+          const data = JSON.parse(buffer.slice(6));
+          fullContent += data.content;
+        } catch {
+          // skip
+        }
+      }
+
+      return fullContent;
+    },
+    [],
+  );
+
+  // Stream directly to NEAR AI from client (using user's API key)
+  const streamViaClient = useCallback(
+    async (
+      messages: { role: string; content: string }[],
+      category: CategoryType,
+      apiKey: string,
+      signal: AbortSignal,
+    ): Promise<string> => {
+      const systemPrompt = getSystemPrompt(category);
+
+      const response = await fetch(`${NEAR_AI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          stream: true,
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Invalid API key — clear it and prompt again
+          localStorage.removeItem(STORAGE_KEY);
+          setUserApiKey(null);
+          setApiKeySource(null);
+          setShowApiKeyModal(true);
+          throw new Error("Invalid API key. Please enter a valid key.");
+        }
+        const err = await response.json().catch(() => ({
+          error: "Unknown error",
+        }));
+        throw new Error(err.error?.message || err.error || "Failed to get response");
+      }
+
+      let fullContent = "";
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            if (line === "data: [DONE]") continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              // OpenAI-compatible format
+              const content = data.choices?.[0]?.delta?.content || "";
+              if (content) {
+                fullContent += content;
+                setStreamingContent(fullContent);
+              }
+            } catch {
+              // skip malformed chunks
+            }
+          }
+        }
+      }
+
+      if (buffer.startsWith("data: ") && buffer !== "data: [DONE]") {
+        try {
+          const data = JSON.parse(buffer.slice(6));
+          const content = data.choices?.[0]?.delta?.content || "";
+          if (content) fullContent += content;
+        } catch {
+          // skip
+        }
+      }
+
+      return fullContent;
+    },
+    [model],
+  );
+
   const streamResponse = useCallback(
     async (
       convId: string,
@@ -136,53 +342,19 @@ export default function ChatPage() {
       let fullContent = "";
 
       try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages, category }),
-          signal: abortController.signal,
-        });
-
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({
-            error: "Unknown error",
-          }));
-          throw new Error(err.error || "Failed to get response");
-        }
-
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              if (line === "data: [DONE]") continue;
-              try {
-                const data = JSON.parse(line.slice(6));
-                fullContent += data.content;
-                setStreamingContent(fullContent);
-              } catch {
-                // skip malformed chunks
-              }
-            }
-          }
-        }
-
-        if (buffer.startsWith("data: ") && buffer !== "data: [DONE]") {
-          try {
-            const data = JSON.parse(buffer.slice(6));
-            fullContent += data.content;
-          } catch {
-            // skip
-          }
+        if (apiKeySource === "local" && userApiKey) {
+          fullContent = await streamViaClient(
+            messages,
+            category,
+            userApiKey,
+            abortController.signal,
+          );
+        } else {
+          fullContent = await streamViaServer(
+            messages,
+            category,
+            abortController.signal,
+          );
         }
 
         if (fullContent.trim()) {
@@ -256,7 +428,7 @@ export default function ChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [],
+    [apiKeySource, userApiKey, streamViaClient, streamViaServer],
   );
 
   const startNewChat = useCallback(
@@ -421,6 +593,14 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-screen bg-zinc-950">
+      {/* API Key Modal */}
+      {showApiKeyModal && (
+        <ApiKeyModal
+          onSave={handleSaveApiKey}
+          onCancel={apiKeySource ? () => setShowApiKeyModal(false) : undefined}
+        />
+      )}
+
       {/* Mobile sidebar toggle */}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -459,6 +639,9 @@ export default function ChatPage() {
           onNewChat={handleNewChat}
           onDelete={handleDelete}
           onDeleteAll={handleDeleteAll}
+          apiKeySource={apiKeySource}
+          onChangeApiKey={handleChangeApiKey}
+          onClearApiKey={handleClearApiKey}
         />
       </div>
 
