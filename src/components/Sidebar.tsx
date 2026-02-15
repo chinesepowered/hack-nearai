@@ -16,6 +16,9 @@ interface SidebarProps {
   onNewChat: () => void;
   onDelete: (id: string) => void;
   onDeleteAll: () => void;
+  apiKeySource?: "server" | "local" | null;
+  onChangeApiKey?: () => void;
+  onClearApiKey?: () => void;
 }
 
 function groupByDate(conversations: Conversation[]) {
@@ -49,6 +52,9 @@ export default function Sidebar({
   onNewChat,
   onDelete,
   onDeleteAll,
+  apiKeySource,
+  onChangeApiKey,
+  onClearApiKey,
 }: SidebarProps) {
   const [showDataPanel, setShowDataPanel] = useState(false);
   const groups = groupByDate(conversations);
@@ -168,6 +174,50 @@ export default function Sidebar({
           </div>
         ))}
       </div>
+
+      {/* API Key status */}
+      {apiKeySource !== undefined && (
+        <div className="border-t border-zinc-800 px-3 pt-3 pb-1">
+          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-800/30">
+            <div className="flex items-center gap-2 text-xs">
+              <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+              <span className="text-zinc-400">
+                {apiKeySource === "server"
+                  ? "Server key"
+                  : apiKeySource === "local"
+                    ? "Your key"
+                    : "No key"}
+              </span>
+            </div>
+            {apiKeySource === "local" && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={onChangeApiKey}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-700/50"
+                >
+                  Change
+                </button>
+                <button
+                  onClick={onClearApiKey}
+                  className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-700/50"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+            {apiKeySource === null && onChangeApiKey && (
+              <button
+                onClick={onChangeApiKey}
+                className="text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-700/50"
+              >
+                Add key
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Bottom: Data management */}
       <div className="border-t border-zinc-800 p-3">
